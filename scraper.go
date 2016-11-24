@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/yhat/scrape"
@@ -17,11 +20,32 @@ const (
 	dependancy  string = "uldep"
 	recommended string = "ulrec"
 	suggested   string = "ulsug"
+
+	state_pkg = iota
+	state_deps
+	state_sha
 )
 
-var (
-	pkgs map[string]string = make(map[string]string)
-)
+type FlatpakSource struct {
+	Type   string `json:"type"`
+	Url    string `json:"url"`
+	Sha256 string `json:"sha256"`
+}
+
+type FlatpakModule struct {
+	Name       string          `json:"name"`
+	ConfigOpts string          `json:"config-opts"`
+	Srcs       []FlatpakSource `json:"sources"`
+}
+
+type depBuilder struct {
+	pkgs    map[string]struct{} // Used to avoid package duplications
+	hashes  map[string]struct{} // Used to avoid tarball duplications
+	modules []FlatpakModule
+	total   int // total packages visited
+	dups    int // dependency already picked up from other package(s)
+	overlap int // different dep package from the same source
+}
 
 func main() {
 	u := os.Args[1]
@@ -32,26 +56,36 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	chDepth := make(chan int, 5)
-	fmt.Println("Starting to walk dependencies for", baseurl.String())
-	walkDeps(baseurl, chDepth)
-	fmt.Println("Finished walking dependencies")
+	db := &depBuilder{
+		pkgs:   make(map[string]struct{}),
+		hashes: make(map[string]struct{}),
+	}
+
+	walkDeps(baseurl, db)
+	log.Printf("Finished walking %d dependencies, %d of which we're dups and %d overlapping.\n", db.total, db.dups, db.overlap)
+	j, err := json.Marshal(db.modules)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("%s", string(j[:]))
 }
 
-func walkDeps(u *url.URL, cd chan int) {
+func walkDeps(u *url.URL, db *depBuilder) {
 	// request and parse
 	resp, err := http.Get(u.String())
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
+	defer resp.Body.Close()
+
 	root, err := html.Parse(resp.Body)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
 	deps := scrape.FindAll(root, matchDeps(dependancy))
-	dups := 0
-	for i, dep := range deps {
+	for _, dep := range deps {
+		db.total++
 		relUrl, err := url.Parse(scrape.Attr(dep, "href"))
 		if err != nil {
 			log.Fatal(err)
@@ -63,22 +97,41 @@ func walkDeps(u *url.URL, cd chan int) {
 		}
 
 		pkg := scrape.Text(dep)
-		if _, dup := pkgs[pkg]; dup {
-			dups++
+		_, dup := db.pkgs[pkg]
+		if dup {
+			db.dups++
 		} else {
-			pkgs[pkg] = resolvedUrl.String()
-			fmt.Printf("%2d %s %s\n", i, pkg, resolvedUrl.String())
-			walkDeps(resolvedUrl)
-		}
-	}
-	// Report
-	fmt.Println("Deps = ", len(deps))
-	fmt.Println("Dup count = ", dups)
+			db.pkgs[pkg] = struct{}{}
+			walkDeps(resolvedUrl, db)
 
-	tb := scrape.FindAll(root, matchTarball(".orig.tar"))
-	fmt.Println("Found", len(tb), "origs")
-	for i, t := range tb {
-		fmt.Printf("%2d %s\n", i, scrape.Attr(t, "href"))
+			var orig, s256 string
+			// Get the link to the ".orig." tarball.
+			tb := scrape.FindAll(root, matchTarball(".orig.tar"))
+			for _, t := range tb {
+				orig = scrape.Attr(t, "href")
+			}
+			// Get the description file and extract the sha256 hash.
+			dsc := scrape.FindAll(root, matchTarball(".dsc"))
+			for _, t := range dsc {
+				url := scrape.Attr(t, "href")
+				s256 = grabSha256fromDesc(url)
+			}
+			if _, ok := db.hashes[s256]; !ok {
+				// Add to slice
+				db.modules = append(db.modules, FlatpakModule{
+					Name:       pkg,
+					ConfigOpts: "",
+					Srcs: []FlatpakSource{FlatpakSource{
+						Type:   "archive",
+						Url:    orig,
+						Sha256: s256,
+					}},
+				})
+				db.hashes[s256] = struct{}{}
+			} else {
+				db.overlap++
+			}
+		}
 	}
 }
 
@@ -104,4 +157,19 @@ func matchTarball(substr string) scrape.Matcher {
 		}
 		return false
 	}
+}
+
+func grabSha256fromDesc(url string) string {
+	resp, err := http.Get(url)
+	if err != nil {
+		log.Fatal(err)
+	}
+	buf := new(bytes.Buffer)
+	buf.ReadFrom(resp.Body)
+	r := regexp.MustCompile("([A-Fa-f0 -9]{64}) .*orig*")
+	sha256Match := r.FindStringSubmatch(buf.String())
+	if len(sha256Match) == 2 {
+		return sha256Match[1]
+	}
+	return "NONE"
 }
