@@ -23,10 +23,10 @@ const (
 
 var (
 	pkgName *string = flag.String("pkg", "", "debian package to be flatpaked")
-	pkgType *string = flag.String("type", "deb", "module type: valid types are 'deb' 'tarball'")
+	pkgType *string = flag.String("type", "deb", "module type: valid types are 'deb' & 'tarball'")
 	debVer  *string = flag.String("deb-version", "jessie", "debian code name to use")
-	arch    *string = flag.String("arch", "amd64", "arch of packages to download")
-	mirror  *string = flag.String("mirror", "ftp.us.debian.org/debian", "mirror to use for downloading debian packages")
+	arch    *string = flag.String("arch", "amd64", "architecture of packages to download")
+	mirror  *string = flag.String("mirror", "ftp.us.debian.org/debian", "mirror to use for downloading .deb packages")
 )
 
 type FlatpakSource struct {
@@ -62,7 +62,7 @@ func main() {
 	}
 
 	walkDeps(baseurl, db)
-	log.Printf("Finished walking %d dependencies, %d of which we're dups.\n", db.total, db.dups)
+	log.Printf("Finished walking %d dependencies, %d of which were dups.\n", db.total, db.dups)
 	j, err := json.Marshal(db.modules)
 	if err != nil {
 		log.Fatal(err)
