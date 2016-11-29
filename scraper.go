@@ -61,7 +61,7 @@ func main() {
 		modType: pkgTypeStr(*pkgType),
 	}
 
-	walkDeps(baseurl, db)
+	walkDeps(baseurl, db, *pkgName)
 	log.Printf("Finished walking %d dependencies, %d of which were dups.\n", db.total, db.dups)
 	j, err := json.Marshal(db.modules)
 	if err != nil {
@@ -70,7 +70,7 @@ func main() {
 	fmt.Printf("%s", string(j[:]))
 }
 
-func walkDeps(u *url.URL, db *depBuilder) {
+func walkDeps(u *url.URL, db *depBuilder, pkg string) {
 	// request and parse
 	resp, err := http.Get(u.String())
 	if err != nil {
@@ -83,6 +83,14 @@ func walkDeps(u *url.URL, db *depBuilder) {
 		log.Fatal(err)
 	}
 
+	var debURL string
+	if *pkgType == "deb" {
+		pkgMirs := scrape.FindAll(root, matchDebPkg(*arch))
+		for _, m := range pkgMirs {
+			debURL = scrape.Attr(m, "href")
+		}
+	}
+
 	deps := scrape.FindAll(root, matchDeps(dependancy))
 	for _, dep := range deps {
 		db.total++
@@ -91,27 +99,28 @@ func walkDeps(u *url.URL, db *depBuilder) {
 			log.Fatal(err)
 		}
 
-		resolvedUrl := u.ResolveReference(relURL)
+		resolvedURL := u.ResolveReference(relURL)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		var url, s256 string
-		pkg := scrape.Text(dep)
-		_, dup := db.pkgs[pkg]
+		dPkg := scrape.Text(dep)
+		_, dup := db.pkgs[dPkg]
 		if dup {
 			db.dups++
 		} else {
 			db.pkgs[pkg] = struct{}{}
-			walkDeps(resolvedUrl, db)
-			if *pkgType == "tarball" {
-				url, s256 = getOrigTarInfo(root)
-			} else {
-				url, s256 = getDebianPkgInfo(u, root, *arch, *mirror)
-			}
-			addDep(db, pkg, url, s256)
+			walkDeps(resolvedURL, db, dPkg)
 		}
 	}
+
+	var pkgURL, s256 string
+	if *pkgType == "tarball" {
+		pkgURL, s256 = getOrigTarInfo(root)
+	} else {
+		pkgURL, s256 = getDebianPkgInfo(*u, debURL, *arch, *mirror)
+	}
+	addDep(db, pkg, pkgURL, s256)
 }
 
 func pkgTypeStr(pt string) string {
@@ -129,7 +138,7 @@ func getOrigTarInfo(root *html.Node) (string, string) {
 	for _, t := range tb {
 		orig = scrape.Attr(t, "href")
 	}
-	// Get the arch, descriptiomirror string extract the sha256 hash.
+	// extract the sha256 hash.
 	dsc := scrape.FindAll(root, matchTarball(".dsc"))
 	for _, t := range dsc {
 		url := scrape.Attr(t, "href")
@@ -137,19 +146,12 @@ func getOrigTarInfo(root *html.Node) (string, string) {
 	}
 	return orig, s256
 }
-func getDebianPkgInfo(u *url.URL, root *html.Node, arch, mirror string) (string, string) {
-	var dlLink string
-	// Get the *linkMirromirrors download page.
-	tb := scrape.FindAll(root, matchDebPkg(arch))
-	for _, t := range tb {
-		dlLink = scrape.Attr(t, "href")
-	}
-
-	relURL, err := url.Parse(dlLink)
+func getDebianPkgInfo(u url.URL, debURL, arch, mirror string) (string, string) {
+	rURL, err := url.Parse(debURL)
 	if err != nil {
 		log.Fatal(err)
 	}
-	resp, err := http.Get(u.ResolveReference(relURL).String())
+	resp, err := http.Get(u.ResolveReference(rURL).String())
 	if err != nil {
 		log.Fatal(err)
 	}
