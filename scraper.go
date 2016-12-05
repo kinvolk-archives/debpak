@@ -132,7 +132,9 @@ func walkDeps(u *url.URL, db *depBuilder, pkg string) {
 	} else {
 		pkgURL, s256 = getDebianPkgInfo(*u, debURL, *arch, *mirror)
 	}
-	addDep(db, pkg, pkgURL, s256)
+	if pkgURL != "" && s256 != "" {
+		addDep(db, pkg, pkgURL, s256)
+	}
 }
 
 func pkgTypeStr(pt string) string {
