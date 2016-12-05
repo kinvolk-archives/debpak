@@ -100,6 +100,10 @@ func walkDeps(u *url.URL, db *depBuilder, pkg string) {
 	var debURL string
 	if *pkgType == "deb" {
 		pkgMirs := scrape.FindAll(root, matchDebPkg(*arch))
+		// Some packages are not specific to an arch
+		if len(pkgMirs) == 0 {
+			pkgMirs = scrape.FindAll(root, matchDebPkg("all"))
+		}
 		for _, m := range pkgMirs {
 			debURL = scrape.Attr(m, "href")
 		}
