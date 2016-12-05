@@ -19,6 +19,7 @@ import (
 const (
 	dependancy string = "uldep"
 	debPath    string = "https://packages.debian.org/%s/%s"
+	secMirror  string = "security.debian.org/debian-security"
 )
 
 var (
@@ -172,6 +173,10 @@ func getDebianPkgInfo(u url.URL, debURL, arch, mirror string) (string, string) {
 	var url, s256 string
 	// Get the description file and extract the sha256 hash.
 	mirrors := scrape.FindAll(dlRoot, matchMirror(mirror))
+	// Some packages are only found on the secure server
+	if len(mirrors) == 0 {
+		mirrors = scrape.FindAll(dlRoot, matchSecMirror())
+	}
 	for _, m := range mirrors {
 		url = scrape.Attr(m, "href")
 	}
@@ -251,6 +256,20 @@ func matchMirror(mirror string) scrape.Matcher {
 			n.Parent.Parent.Parent.Parent.DataAtom == atom.Div {
 			return scrape.Text(n) == mirror &&
 				strings.Contains(scrape.Attr(n.Parent.Parent.Parent, "class"), "card")
+		}
+		return false
+	}
+}
+
+func matchSecMirror() scrape.Matcher {
+	return func(n *html.Node) bool {
+		if n.DataAtom == atom.A &&
+			n.Parent != nil &&
+			n.Parent.Parent != nil &&
+			n.Parent.Parent.Parent != nil &&
+			n.Parent.Parent.Parent.DataAtom == atom.Div {
+			return scrape.Text(n) == secMirror &&
+				strings.Contains(scrape.Attr(n.Parent.Parent.Parent, "id"), "content")
 		}
 		return false
 	}
