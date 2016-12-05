@@ -71,6 +71,13 @@ func main() {
 }
 
 func walkDeps(u *url.URL, db *depBuilder, pkg string) {
+	_, dup := db.pkgs[pkg]
+	if dup {
+		db.dups++
+		return
+	}
+
+	db.pkgs[pkg] = struct{}{}
 	// request and parse
 	resp, err := http.Get(u.String())
 	if err != nil {
@@ -105,13 +112,7 @@ func walkDeps(u *url.URL, db *depBuilder, pkg string) {
 		}
 
 		dPkg := scrape.Text(dep)
-		_, dup := db.pkgs[dPkg]
-		if dup {
-			db.dups++
-		} else {
-			db.pkgs[pkg] = struct{}{}
-			walkDeps(resolvedURL, db, dPkg)
-		}
+		walkDeps(resolvedURL, db, dPkg)
 	}
 
 	var pkgURL, s256 string
