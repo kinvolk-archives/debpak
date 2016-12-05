@@ -33,17 +33,18 @@ type FlatpakSource struct {
 	Type   string `json:"type"`
 	Url    string `json:"url"`
 	Sha256 string `json:"sha256"`
+	Dest   string `json:"dest"`
 }
 
 type FlatpakModule struct {
-	Name       string          `json:"name"`
-	ConfigOpts string          `json:"config-opts"`
-	Srcs       []FlatpakSource `json:"sources"`
+	Name      string          `json:"name"`
+	NoAutogen string          `json:"no-autogen"`
+	Srcs      []FlatpakSource `json:"sources"`
 }
 
 type depBuilder struct {
 	pkgs    map[string]struct{} // Used to avoid package duplications
-	modules []FlatpakModule
+	sources []FlatpakSource
 	modType string
 	total   int // total packages visited
 	dups    int // dependency already picked up from other package(s)
@@ -63,7 +64,12 @@ func main() {
 
 	walkDeps(baseurl, db, *pkgName)
 	log.Printf("Finished walking %d dependencies, %d of which were dups.\n", db.total, db.dups)
-	j, err := json.Marshal(db.modules)
+
+	j, err := json.Marshal(FlatpakModule{
+		Name:      *pkgName,
+		NoAutogen: "true",
+		Srcs:      db.sources,
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -178,14 +184,11 @@ func getDebianPkgInfo(u url.URL, debURL, arch, mirror string) (string, string) {
 }
 
 func addDep(db *depBuilder, pkg, url, s256 string) {
-	db.modules = append(db.modules, FlatpakModule{
-		Name:       pkg,
-		ConfigOpts: "",
-		Srcs: []FlatpakSource{FlatpakSource{
-			Type:   db.modType,
-			Url:    url,
-			Sha256: s256,
-		}},
+	db.sources = append(db.sources, FlatpakSource{
+		Type:   db.modType,
+		Url:    url,
+		Sha256: s256,
+		Dest:   "debs",
 	})
 }
 
